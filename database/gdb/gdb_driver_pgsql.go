@@ -40,16 +40,13 @@ func (d *DriverPgsql) New(core *Core, node *ConfigNode) (DB, error) {
 // Open creates and returns a underlying sql.DB object for pgsql.
 func (d *DriverPgsql) Open(config *ConfigNode) (*sql.DB, error) {
 	var source string
-	if config.Link != "" {
-		source = config.Link
+	if config.LinkInfo != "" {
+		source = config.LinkInfo
 	} else {
 		source = fmt.Sprintf(
 			"user=%s password=%s host=%s port=%s dbname=%s sslmode=disable",
 			config.User, config.Pass, config.Host, config.Port, config.Name,
 		)
-		if config.Timezone != "" {
-			source = fmt.Sprintf("%s timezone=%s", source, config.Timezone)
-		}
 	}
 	intlog.Printf("Open: %s", source)
 	if db, err := sql.Open("postgres", source); err == nil {
@@ -59,10 +56,10 @@ func (d *DriverPgsql) Open(config *ConfigNode) (*sql.DB, error) {
 	}
 }
 
-// FilteredLink retrieves and returns filtered `linkInfo` that can be using for
+// FilteredLinkInfo retrieves and returns filtered `linkInfo` that can be using for
 // logging or tracing purpose.
-func (d *DriverPgsql) FilteredLink() string {
-	linkInfo := d.GetConfig().Link
+func (d *DriverPgsql) FilteredLinkInfo() string {
+	linkInfo := d.GetConfig().LinkInfo
 	if linkInfo == "" {
 		return ""
 	}
@@ -79,8 +76,8 @@ func (d *DriverPgsql) GetChars() (charLeft string, charRight string) {
 	return "\"", "\""
 }
 
-// DoCommit deals with the sql string before commits it to underlying sql driver.
-func (d *DriverPgsql) DoCommit(ctx context.Context, link Link, sql string, args []interface{}) (string, []interface{}) {
+// HandleSqlBeforeCommit deals with the sql string before commits it to underlying sql driver.
+func (d *DriverPgsql) HandleSqlBeforeCommit(ctx context.Context, link Link, sql string, args []interface{}) (string, []interface{}) {
 	var index int
 	// Convert place holder char '?' to string "$x".
 	sql, _ = gregex.ReplaceStringFunc("\\?", sql, func(s string) string {
@@ -138,9 +135,9 @@ func (d *DriverPgsql) TableFields(ctx context.Context, table string, schema ...s
 			result       Result
 			link, err    = d.SlaveLink(useSchema)
 			structureSql = fmt.Sprintf(`
-SELECT a.attname AS field, t.typname AS type FROM pg_class c, pg_attribute a
+SELECT a.attname AS field, t.typname AS type,b.description as comment FROM pg_class c, pg_attribute a 
 LEFT OUTER JOIN pg_description b ON a.attrelid=b.objoid AND a.attnum = b.objsubid,pg_type t
-WHERE c.relname = '%s' and a.attnum > 0 and a.attrelid = c.oid and a.atttypid = t.oid
+WHERE c.relname = '%s' and a.attnum > 0 and a.attrelid = c.oid and a.atttypid = t.oid 
 ORDER BY a.attnum`,
 				strings.ToLower(table),
 			)
@@ -156,9 +153,10 @@ ORDER BY a.attnum`,
 		fields = make(map[string]*TableField)
 		for i, m := range result {
 			fields[m["field"].String()] = &TableField{
-				Index: i,
-				Name:  m["field"].String(),
-				Type:  m["type"].String(),
+				Index:   i,
+				Name:    m["field"].String(),
+				Type:    m["type"].String(),
+				Comment: m["comment"].String(),
 			}
 		}
 		return fields
