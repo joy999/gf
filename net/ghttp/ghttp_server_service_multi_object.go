@@ -66,6 +66,7 @@ func (s *Server) BindMultiObjectRest(pattern string, object interface{}) {
 }
 
 func (s *Server) callMultiObjectMethods(object interface{}, methodName string) func(*Request) {
+
 	var (
 		v = reflect.ValueOf(object)
 		t = v.Type()
@@ -78,15 +79,20 @@ func (s *Server) callMultiObjectMethods(object interface{}, methodName string) f
 		pool, ok := serviceMultiObjectCache[structName]
 		if !ok {
 			pool = gpool.New(time.Minute*5, func() (interface{}, error) {
+				v := reflect.ValueOf(object)
+				t := v.Type()
+
 				o := new(serviceMultiObjectInfo)
 				o.rVal = reflect.New(t)
-				o.rVal.Elem().Set(v)
+				ov := o.rVal.Elem()
+				ov.Set(v)
 				o.methods = make(map[string]func(*Request), 0)
-				if v.MethodByName("Init").IsValid() {
-					o.initFunc = v.MethodByName("Init").Interface().(func(*Request))
+
+				if ov.MethodByName("Init").IsValid() {
+					o.initFunc = ov.MethodByName("Init").Interface().(func(*Request))
 				}
-				if v.MethodByName("Shut").IsValid() {
-					o.shutFunc = v.MethodByName("Shut").Interface().(func(*Request))
+				if ov.MethodByName("Shut").IsValid() {
+					o.shutFunc = ov.MethodByName("Shut").Interface().(func(*Request))
 				}
 				return o, nil
 			})
@@ -94,7 +100,7 @@ func (s *Server) callMultiObjectMethods(object interface{}, methodName string) f
 		}
 
 		po, _ := pool.Get()
-		o := po.(serviceMultiObjectInfo)
+		o := po.(*serviceMultiObjectInfo)
 
 		if o.initFunc != nil {
 			niceCallFunc(func() {
@@ -103,8 +109,9 @@ func (s *Server) callMultiObjectMethods(object interface{}, methodName string) f
 		}
 
 		if itemFunc, ok := o.methods[methodName]; !ok {
-			v = o.rVal
-			methodValue := v.MethodByName(methodName)
+			v := o.rVal
+			ov := v.Elem()
+			methodValue := ov.MethodByName(methodName)
 			if itemFunc, ok := methodValue.Interface().(func(*Request)); ok {
 				o.methods[methodName] = itemFunc
 				niceCallFunc(func() {
