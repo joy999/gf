@@ -117,11 +117,11 @@ func forkReloadProcess(ctx context.Context, newExeFilePath ...string) error {
 	var (
 		path = os.Args[0]
 	)
-	if len(newExeFilePath) > 0 {
+	if len(newExeFilePath) > 0 && newExeFilePath[0] != "" {
 		path = newExeFilePath[0]
 	}
 	var (
-		p   = gproc.NewProcess(path, os.Args, os.Environ())
+		p   = gproc.NewProcess(path, os.Args[1:], os.Environ())
 		sfm = getServerFdMap()
 	)
 	for name, m := range sfm {
@@ -156,19 +156,19 @@ func forkReloadProcess(ctx context.Context, newExeFilePath ...string) error {
 }
 
 // forkRestartProcess creates a new server process.
-func forkRestartProcess(ctx context.Context, newExeFilePath string) error {
+func forkRestartProcess(ctx context.Context, newExeFilePath ...string) error {
 	var (
 		path = os.Args[0]
 	)
-	if newExeFilePath != "" {
-		path = newExeFilePath
+	if len(newExeFilePath) > 0 && newExeFilePath[0] != "" {
+		path = newExeFilePath[0]
 	}
 	if err := os.Unsetenv(adminActionReloadEnvKey); err != nil {
 		intlog.Errorf(ctx, `%+v`, err)
 	}
 	env := os.Environ()
 	env = append(env, adminActionRestartEnvKey+"=1")
-	p := gproc.NewProcess(path, os.Args, env)
+	p := gproc.NewProcess(path, os.Args[1:], env)
 	if _, err := p.Start(ctx); err != nil {
 		glog.Errorf(
 			ctx,

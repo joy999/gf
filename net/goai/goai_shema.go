@@ -54,7 +54,7 @@ type Schema struct {
 	MaxItems             *uint64        `json:"maxItems,omitempty"`
 	Items                *SchemaRef     `json:"items,omitempty"`
 	Required             []string       `json:"required,omitempty"`
-	Properties           Schemas        `json:"properties,omitempty"`
+	Properties           *Schemas       `json:"properties,omitempty"`
 	MinProps             uint64         `json:"minProperties,omitempty"`
 	MaxProps             *uint64        `json:"maxProperties,omitempty"`
 	AdditionalProperties *SchemaRef     `json:"additionalProperties,omitempty"`
@@ -183,13 +183,7 @@ func (oai *OpenApiV3) structToSchema(object interface{}) (*Schema, error) {
 		if !gstr.IsLetterUpper(structField.Name()[0]) {
 			continue
 		}
-		var fieldName = structField.Name()
-		for _, tagName := range gconv.StructTagPriority {
-			if tagValue := structField.Tag(tagName); tagValue != "" {
-				fieldName = tagValue
-				break
-			}
-		}
+		var fieldName = structField.TagPriorityName()
 		fieldName = gstr.Split(gstr.Trim(fieldName), ",")[0]
 		if fieldName == "" {
 			fieldName = structField.Name()
