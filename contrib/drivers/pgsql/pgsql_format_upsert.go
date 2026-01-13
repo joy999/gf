@@ -40,6 +40,29 @@ func (d *Driver) FormatUpsert(columns []string, list gdb.List, option gdb.DoInse
 					d.Core.QuoteWord(k),
 					v,
 				)
+			case gdb.Counter, *gdb.Counter:
+				var counter gdb.Counter
+				switch value := v.(type) {
+				case gdb.Counter:
+					counter = value
+				case *gdb.Counter:
+					counter = *value
+				}
+				operator, columnVal := "+", counter.Value
+				if columnVal < 0 {
+					operator, columnVal = "-", -columnVal
+				}
+				// Note: In PostgreSQL ON CONFLICT DO UPDATE, we use EXCLUDED to reference
+				// the value that was proposed for insertion. This differs from MySQL's
+				// ON DUPLICATE KEY UPDATE behavior where the column name without prefix
+				// references the current row's value.
+				onDuplicateStr += fmt.Sprintf(
+					"%s=EXCLUDED.%s%s%s",
+					d.QuoteWord(k),
+					d.QuoteWord(counter.Field),
+					operator,
+					gconv.String(columnVal),
+				)
 			default:
 				onDuplicateStr += fmt.Sprintf(
 					"%s=EXCLUDED.%s",

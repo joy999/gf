@@ -226,6 +226,19 @@ func Test_Model_Count(t *testing.T) {
 	})
 }
 
+func Test_Model_Exist(t *testing.T) {
+	table := createInitTable()
+	defer dropTable(table)
+	gtest.C(t, func(t *gtest.T) {
+		exist, err := db.Model(table).Exist()
+		t.AssertNil(err)
+		t.Assert(exist, TableSize > 0)
+		exist, err = db.Model(table).Where("id", -1).Exist()
+		t.AssertNil(err)
+		t.Assert(exist, false)
+	})
+}
+
 func Test_Model_Where(t *testing.T) {
 	table := createInitTable()
 	defer dropTable(table)
@@ -321,14 +334,53 @@ func Test_Model_Replace(t *testing.T) {
 	defer dropTable(table)
 
 	gtest.C(t, func(t *gtest.T) {
-		_, err := db.Model(table).Data(g.Map{
+		// Insert initial record
+		result, err := db.Model(table).Data(g.Map{
+			"id":          1,
+			"passport":    "t1",
+			"password":    "pass1",
+			"nickname":    "T1",
+			"create_time": "2018-10-24 10:00:00",
+		}).Insert()
+		t.AssertNil(err)
+		n, _ := result.RowsAffected()
+		t.Assert(n, 1)
+
+		// Replace with new data
+		result, err = db.Model(table).Data(g.Map{
 			"id":          1,
 			"passport":    "t11",
 			"password":    "25d55ad283aa400af464c76d713c07ad",
 			"nickname":    "T11",
 			"create_time": "2018-10-24 10:00:00",
 		}).Replace()
-		t.Assert(err, "Replace operation is not supported by pgsql driver")
+		t.AssertNil(err)
+		n, _ = result.RowsAffected()
+		t.Assert(n, 1)
+
+		// Verify the data was replaced
+		one, err := db.Model(table).Where("id", 1).One()
+		t.AssertNil(err)
+		t.Assert(one["passport"].String(), "t11")
+		t.Assert(one["password"].String(), "25d55ad283aa400af464c76d713c07ad")
+		t.Assert(one["nickname"].String(), "T11")
+
+		// Replace with new ID (insert new record)
+		result, err = db.Model(table).Data(g.Map{
+			"id":          2,
+			"passport":    "t22",
+			"password":    "pass22",
+			"nickname":    "T22",
+			"create_time": "2018-10-24 11:00:00",
+		}).Replace()
+		t.AssertNil(err)
+		n, _ = result.RowsAffected()
+		t.Assert(n, 1)
+
+		// Verify new record was inserted
+		count, err := db.Model(table).Count()
+		t.AssertNil(err)
+		t.Assert(count, 2)
 	})
 }
 
@@ -508,6 +560,28 @@ func Test_Model_OnDuplicate(t *testing.T) {
 	})
 }
 
+func Test_Model_OnDuplicateWithCounter(t *testing.T) {
+	table := createInitTable()
+	defer dropTable(table)
+
+	gtest.C(t, func(t *gtest.T) {
+		data := g.Map{
+			"id":          1,
+			"passport":    "pp1",
+			"password":    "pw1",
+			"nickname":    "n1",
+			"create_time": "2016-06-06",
+		}
+		_, err := db.Model(table).OnConflict("id").OnDuplicate(g.Map{
+			"id": gdb.Counter{Field: "id", Value: 999999},
+		}).Data(data).Save()
+		t.AssertNil(err)
+		one, err := db.Model(table).WherePri(1).One()
+		t.AssertNil(err)
+		t.AssertNil(one)
+	})
+}
+
 func Test_Model_OnDuplicateEx(t *testing.T) {
 	table := createInitTable()
 	defer dropTable(table)
@@ -585,5 +659,206 @@ func Test_Model_OnDuplicateEx(t *testing.T) {
 		t.Assert(one["passport"], data["passport"])
 		t.Assert(one["password"], data["password"])
 		t.Assert(one["nickname"], "name_1")
+	})
+}
+
+func Test_OrderRandom(t *testing.T) {
+	table := createInitTable()
+	defer dropTable(table)
+
+	gtest.C(t, func(t *gtest.T) {
+		result, err := db.Model(table).OrderRandom().All()
+		t.AssertNil(err)
+		t.Assert(len(result), TableSize)
+	})
+}
+
+func Test_ConvertSliceString(t *testing.T) {
+	table := createTable()
+	defer dropTable(table)
+
+	gtest.C(t, func(t *gtest.T) {
+		type User struct {
+			Id            int
+			Passport      string
+			Password      string
+			NickName      string
+			CreateTime    *gtime.Time
+			FavoriteMovie []string
+			FavoriteMusic []string
+		}
+
+		var (
+			user  User
+			user2 User
+			err   error
+		)
+
+		// slice string not null
+		_, err = db.Model(table).Data(g.Map{
+			"id":             1,
+			"passport":       "p1",
+			"password":       "pw1",
+			"nickname":       "n1",
+			"create_time":    CreateTime,
+			"favorite_movie": g.Slice{"Iron-Man", "Spider-Man"},
+			"favorite_music": g.Slice{"Hey jude", "Let it be"},
+		}).Insert()
+		t.AssertNil(err)
+
+		err = db.Model(table).Where("id", 1).Scan(&user)
+		t.AssertNil(err)
+		t.Assert(len(user.FavoriteMusic), 2)
+		t.Assert(user.FavoriteMusic[0], "Hey jude")
+		t.Assert(user.FavoriteMusic[1], "Let it be")
+		t.Assert(len(user.FavoriteMovie), 2)
+		t.Assert(user.FavoriteMovie[0], "Iron-Man")
+		t.Assert(user.FavoriteMovie[1], "Spider-Man")
+
+		// slice string null
+		_, err = db.Model(table).Data(g.Map{
+			"id":          2,
+			"passport":    "p1",
+			"password":    "pw1",
+			"nickname":    "n1",
+			"create_time": CreateTime,
+		}).Insert()
+		t.AssertNil(err)
+
+		err = db.Model(table).Where("id", 2).Scan(&user2)
+		t.AssertNil(err)
+		t.Assert(user2.FavoriteMusic, nil)
+		t.Assert(len(user2.FavoriteMovie), 0)
+	})
+}
+
+func Test_ConvertSliceFloat64(t *testing.T) {
+	table := createTable()
+	defer dropTable(table)
+
+	type Args struct {
+		NumericValues []float64 `orm:"numeric_values"`
+		DecimalValues []float64 `orm:"decimal_values"`
+	}
+	type User struct {
+		Id         int         `orm:"id"`
+		Passport   string      `orm:"passport"`
+		Password   string      `json:"password"`
+		NickName   string      `json:"nickname"`
+		CreateTime *gtime.Time `json:"create_time"`
+		Args
+	}
+
+	tests := []struct {
+		name string
+		args Args
+	}{
+		{
+			name: "nil",
+			args: Args{
+				NumericValues: nil,
+				DecimalValues: nil,
+			},
+		},
+		{
+			name: "not nil",
+			args: Args{
+				NumericValues: []float64{1.1, 2.2, 3.3},
+				DecimalValues: []float64{1.1, 2.2, 3.3},
+			},
+		},
+		{
+			name: "not empty",
+			args: Args{
+				NumericValues: []float64{},
+				DecimalValues: []float64{},
+			},
+		},
+	}
+	now := gtime.New(CreateTime)
+	for i, tt := range tests {
+		gtest.C(t, func(t *gtest.T) {
+			user := User{
+				Id:         i + 1,
+				Passport:   "",
+				Password:   "",
+				NickName:   "",
+				CreateTime: now,
+				Args:       tt.args,
+			}
+
+			_, err := db.Model(table).OmitNilData().Insert(user)
+			t.AssertNil(err)
+			var got Args
+			err = db.Model(table).Where("id", user.Id).Limit(1).Scan(&got)
+			t.AssertNil(err)
+			t.AssertEQ(tt.args, got)
+		})
+	}
+}
+
+func Test_Model_InsertIgnore(t *testing.T) {
+	table := createTable()
+	defer dropTable(table)
+
+	gtest.C(t, func(t *gtest.T) {
+		user := db.Model(table)
+		result, err := user.Data(g.Map{
+			"id":          1,
+			"uid":         1,
+			"passport":    "t1",
+			"password":    "25d55ad283aa400af464c76d713c07ad",
+			"nickname":    "name_1",
+			"create_time": gtime.Now().String(),
+		}).Insert()
+		t.AssertNil(err)
+		n, _ := result.RowsAffected()
+		t.Assert(n, 1)
+
+		result, err = db.Model(table).Data(g.Map{
+			"id":          1,
+			"uid":         1,
+			"passport":    "t1",
+			"password":    "25d55ad283aa400af464c76d713c07ad",
+			"nickname":    "name_1",
+			"create_time": gtime.Now().String(),
+		}).Insert()
+		t.AssertNE(err, nil)
+
+		result, err = db.Model(table).Data(g.Map{
+			"id":          1,
+			"uid":         1,
+			"passport":    "t2",
+			"password":    "25d55ad283aa400af464c76d713c07ad",
+			"nickname":    "name_2",
+			"create_time": gtime.Now().String(),
+		}).InsertIgnore()
+		t.AssertNil(err)
+
+		n, _ = result.RowsAffected()
+		t.Assert(n, 0)
+
+		value, err := db.Model(table).Fields("passport").WherePri(1).Value()
+		t.AssertNil(err)
+		t.Assert(value.String(), "t1")
+
+		count, err := db.Model(table).Count()
+		t.AssertNil(err)
+		t.Assert(count, 1)
+
+		// pgsql support ignore without primary key
+		result, err = db.Model(table).Data(g.Map{
+			// "id":          1,
+			"uid":         1,
+			"passport":    "t2",
+			"password":    "25d55ad283aa400af464c76d713c07ad",
+			"nickname":    "name_2",
+			"create_time": gtime.Now().String(),
+		}).InsertIgnore()
+		t.AssertNil(err)
+
+		count, err = db.Model(table).Count()
+		t.AssertNil(err)
+		t.Assert(count, 1)
 	})
 }

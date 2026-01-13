@@ -8,15 +8,19 @@ package genctrl
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"path/filepath"
 	"strings"
 
-	"github.com/gogf/gf/cmd/gf/v2/internal/consts"
-	"github.com/gogf/gf/cmd/gf/v2/internal/utility/mlog"
 	"github.com/gogf/gf/v2/container/gset"
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gfile"
 	"github.com/gogf/gf/v2/text/gstr"
+
+	"github.com/gogf/gf/cmd/gf/v2/internal/consts"
+	"github.com/gogf/gf/cmd/gf/v2/internal/utility/mlog"
 )
 
 type controllerGenerator struct{}
@@ -89,7 +93,7 @@ func (c *controllerGenerator) doGenerateCtrlNewByModuleAndVersion(
 		if err = gfile.PutContents(moduleFilePath, gstr.TrimLeft(content)); err != nil {
 			return err
 		}
-		mlog.Printf(`generated: %s`, moduleFilePath)
+		mlog.Printf(`generated: %s`, gfile.RealPath(moduleFilePath))
 	}
 	if !gfile.Exists(moduleFilePathNew) {
 		content := gstr.ReplaceByMap(consts.TemplateGenCtrlControllerNewEmpty, g.MapStrStr{
@@ -99,7 +103,7 @@ func (c *controllerGenerator) doGenerateCtrlNewByModuleAndVersion(
 		if err = gfile.PutContents(moduleFilePathNew, gstr.TrimLeft(content)); err != nil {
 			return err
 		}
-		mlog.Printf(`generated: %s`, moduleFilePathNew)
+		mlog.Printf(`generated: %s`, gfile.RealPath(moduleFilePathNew))
 	}
 	filePaths, err := gfile.ScanDir(dstModuleFolderPath, "*.go", false)
 	if err != nil {
@@ -137,13 +141,14 @@ func (c *controllerGenerator) doGenerateCtrlItem(dstModuleFolderPath string, ite
 
 	if gfile.Exists(methodFilePath) {
 		content = gstr.ReplaceByMap(consts.TemplateGenCtrlControllerMethodFuncMerge, g.MapStrStr{
-			"{Module}":     item.Module,
-			"{CtrlName}":   ctrlName,
-			"{Version}":    item.Version,
-			"{MethodName}": item.MethodName,
+			"{Module}":        item.Module,
+			"{CtrlName}":      ctrlName,
+			"{Version}":       item.Version,
+			"{MethodName}":    item.MethodName,
+			"{MethodComment}": item.GetComment(),
 		})
-
-		if gstr.Contains(gfile.GetContents(methodFilePath), fmt.Sprintf(`func (c *%v) %v(`, ctrlName, item.MethodName)) {
+		// Use AST-based checking for more accurate method detection
+		if methodExists(methodFilePath, ctrlName, item.MethodName) {
 			return
 		}
 		if err = gfile.PutContentsAppend(methodFilePath, gstr.TrimLeft(content)); err != nil {
@@ -151,23 +156,23 @@ func (c *controllerGenerator) doGenerateCtrlItem(dstModuleFolderPath string, ite
 		}
 	} else {
 		content = gstr.ReplaceByMap(consts.TemplateGenCtrlControllerMethodFunc, g.MapStrStr{
-			"{Module}":     item.Module,
-			"{ImportPath}": item.Import,
-			"{CtrlName}":   ctrlName,
-			"{Version}":    item.Version,
-			"{MethodName}": item.MethodName,
+			"{Module}":        item.Module,
+			"{ImportPath}":    item.Import,
+			"{CtrlName}":      ctrlName,
+			"{Version}":       item.Version,
+			"{MethodName}":    item.MethodName,
+			"{MethodComment}": item.GetComment(),
 		})
 		if err = gfile.PutContents(methodFilePath, gstr.TrimLeft(content)); err != nil {
 			return err
 		}
 	}
-	mlog.Printf(`generated: %s`, methodFilePath)
+	mlog.Printf(`generated: %s`, gfile.RealPath(methodFilePath))
 	return
 }
 
 // use -merge
 func (c *controllerGenerator) doGenerateCtrlMergeItem(dstModuleFolderPath string, apiItems []apiItem, doneApiSet *gset.StrSet) (err error) {
-
 	type controllerFileItem struct {
 		module     string
 		version    string
@@ -190,12 +195,23 @@ func (c *controllerGenerator) doGenerateCtrlMergeItem(dstModuleFolderPath string
 			ctrlFileItemMap[api.FileName] = ctrlFileItem
 		}
 
+		ctrlName := fmt.Sprintf(`Controller%s`, gstr.UcFirst(api.Version))
 		ctrl := gstr.TrimLeft(gstr.ReplaceByMap(consts.TemplateGenCtrlControllerMethodFuncMerge, g.MapStrStr{
-			"{Module}":     api.Module,
-			"{CtrlName}":   fmt.Sprintf(`Controller%s`, gstr.UcFirst(api.Version)),
-			"{Version}":    api.Version,
-			"{MethodName}": api.MethodName,
+			"{Module}":        api.Module,
+			"{CtrlName}":      ctrlName,
+			"{Version}":       api.Version,
+			"{MethodName}":    api.MethodName,
+			"{MethodComment}": api.GetComment(),
 		}))
+
+		ctrlFilePath := gfile.Join(dstModuleFolderPath, fmt.Sprintf(
+			`%s_%s_%s.go`, ctrlFileItem.module, ctrlFileItem.version, api.FileName,
+		))
+		// Use AST-based checking for more accurate method detection
+		if methodExists(ctrlFilePath, ctrlName, api.MethodName) {
+			return
+		}
+
 		ctrlFileItem.controllers.WriteString(ctrl)
 		doneApiSet.Add(api.String())
 	}
@@ -221,7 +237,45 @@ func (c *controllerGenerator) doGenerateCtrlMergeItem(dstModuleFolderPath string
 		if err = gfile.PutContentsAppend(ctrlFilePath, ctrlFileItem.controllers.String()); err != nil {
 			return err
 		}
-		mlog.Printf(`generated: %s`, ctrlFilePath)
+		mlog.Printf(`generated: %s`, gfile.RealPath(ctrlFilePath))
 	}
 	return
+}
+
+// methodExists checks if a method with the given receiver type and name exists in the file.
+// It uses AST parsing to accurately detect method definitions regardless of formatting.
+// This handles various code formatting styles including multi-line method signatures.
+func methodExists(filePath, ctrlName, methodName string) bool {
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, filePath, nil, parser.ParseComments)
+	if err != nil {
+		// If parsing fails (e.g., file doesn't exist or invalid syntax), return false
+		return false
+	}
+	for _, decl := range node.Decls {
+		funcDecl, ok := decl.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		// Check if it's a method (has receiver)
+		if funcDecl.Recv != nil && len(funcDecl.Recv.List) > 0 {
+			// Extract receiver type name
+			// Handle both *T and T patterns
+			recvType := ""
+			switch t := funcDecl.Recv.List[0].Type.(type) {
+			case *ast.StarExpr:
+				if ident, ok := t.X.(*ast.Ident); ok {
+					recvType = ident.Name
+				}
+			case *ast.Ident:
+				recvType = t.Name
+			}
+
+			// Check if both receiver type and method name match
+			if recvType == ctrlName && funcDecl.Name.Name == methodName {
+				return true
+			}
+		}
+	}
+	return false
 }

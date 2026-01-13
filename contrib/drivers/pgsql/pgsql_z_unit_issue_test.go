@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/gogf/gf/v2/database/gdb"
-
 	"github.com/gogf/gf/v2/frame/g"
 	"github.com/gogf/gf/v2/os/gtime"
 	"github.com/gogf/gf/v2/test/gtest"
@@ -40,7 +39,7 @@ func Test_Issue3330(t *testing.T) {
 
 	gtest.C(t, func(t *gtest.T) {
 		var (
-			list []map[string]interface{}
+			list []map[string]any
 			one  gdb.Record
 			err  error
 		)
@@ -146,8 +145,8 @@ func Test_Issue3671(t *testing.T) {
 // https://github.com/gogf/gf/issues/3668
 func Test_Issue3668(t *testing.T) {
 	type Issue3668 struct {
-		Text   interface{}
-		Number interface{}
+		Text   any
+		Number any
 	}
 	var (
 		sqlText = gtest.DataContent("issues", "issue3668.sql")
@@ -169,6 +168,40 @@ func Test_Issue3668(t *testing.T) {
 		_, err := dao.Ctx(ctx).
 			Data(data).
 			Insert()
+		t.AssertNil(err)
+	})
+}
+
+type Issue4033Status int
+
+const (
+	Issue4033StatusA Issue4033Status = 1
+)
+
+func (s Issue4033Status) String() string {
+	return "somevalue"
+}
+
+func (s Issue4033Status) Int64() int64 {
+	return int64(s)
+}
+
+// https://github.com/gogf/gf/issues/4033
+func Test_Issue4033(t *testing.T) {
+	var (
+		sqlText = gtest.DataContent("issues", "issue4033.sql")
+		table   = "test_enum"
+	)
+	if _, err := db.Exec(ctx, sqlText); err != nil {
+		gtest.Fatal(err)
+	}
+	defer dropTable(table)
+
+	gtest.C(t, func(t *gtest.T) {
+		query := g.Map{
+			"status": g.Slice{Issue4033StatusA},
+		}
+		_, err := db.Model(table).Ctx(ctx).Where(query).All()
 		t.AssertNil(err)
 	})
 }

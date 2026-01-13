@@ -16,6 +16,7 @@ import (
 	"github.com/gogf/gf/v2/os/gtime"
 	"github.com/gogf/gf/v2/test/gtest"
 	"github.com/gogf/gf/v2/util/gconv"
+	"github.com/gogf/gf/v2/util/guid"
 )
 
 func Test_IsDir(t *testing.T) {
@@ -213,7 +214,6 @@ func Test_OpenWithFlagPerm(t *testing.T) {
 }
 
 func Test_Exists(t *testing.T) {
-
 	gtest.C(t, func(t *gtest.T) {
 		var (
 			flag  bool
@@ -680,8 +680,137 @@ func Test_SelfName(t *testing.T) {
 	})
 }
 
-func Test_MTimestamp(t *testing.T) {
+func Test_RemoveFile_RemoveAll(t *testing.T) {
+	// safe deleting single file.
 	gtest.C(t, func(t *gtest.T) {
-		t.Assert(gfile.MTimestamp(gfile.Temp()) > 0, true)
+		path := gfile.Temp(guid.S())
+		err := gfile.PutContents(path, "1")
+		t.AssertNil(err)
+		t.Assert(gfile.Exists(path), true)
+
+		err = gfile.RemoveFile(path)
+		t.AssertNil(err)
+		t.Assert(gfile.Exists(path), false)
+	})
+	// error deleting dir which is not empty.
+	gtest.C(t, func(t *gtest.T) {
+		var (
+			err       error
+			dirPath   = gfile.Temp(guid.S())
+			filePath1 = gfile.Join(dirPath, guid.S())
+			filePath2 = gfile.Join(dirPath, guid.S())
+		)
+		err = gfile.PutContents(filePath1, "1")
+		t.AssertNil(err)
+		t.Assert(gfile.Exists(filePath1), true)
+
+		err = gfile.PutContents(filePath2, "2")
+		t.AssertNil(err)
+		t.Assert(gfile.Exists(filePath2), true)
+
+		err = gfile.RemoveFile(dirPath)
+		t.AssertNE(err, nil)
+		t.Assert(gfile.Exists(filePath1), true)
+		t.Assert(gfile.Exists(filePath2), true)
+
+		err = gfile.RemoveAll(dirPath)
+		t.AssertNil(err)
+		t.Assert(gfile.Exists(filePath1), false)
+		t.Assert(gfile.Exists(filePath2), false)
+	})
+}
+
+func Test_Join(t *testing.T) {
+	gtest.C(t, func(t *gtest.T) {
+		// Basic join
+		t.Assert(gfile.Join("a", "b", "c"), "a"+gfile.Separator+"b"+gfile.Separator+"c")
+
+		// Join with trailing separator
+		t.Assert(gfile.Join("a"+gfile.Separator, "b"), "a"+gfile.Separator+"b")
+
+		// Join with empty string
+		t.Assert(gfile.Join("", "a", "b"), "a"+gfile.Separator+"b")
+
+		// Join single path
+		t.Assert(gfile.Join("single"), "single")
+
+		// Join with absolute path
+		t.Assert(gfile.Join(gfile.Separator+"root", "path"), gfile.Separator+"root"+gfile.Separator+"path")
+
+		// Join empty
+		t.Assert(gfile.Join(), "")
+	})
+}
+
+func Test_Chdir(t *testing.T) {
+	gtest.C(t, func(t *gtest.T) {
+		// Save current working directory
+		originalPwd := gfile.Pwd()
+		defer func() {
+			// Restore original working directory
+			_ = gfile.Chdir(originalPwd)
+		}()
+
+		// Test changing to temp directory
+		tempDir := gfile.Temp()
+		err := gfile.Chdir(tempDir)
+		t.AssertNil(err)
+		t.Assert(gfile.Pwd(), tempDir)
+
+		// Test changing to non-existent directory
+		err = gfile.Chdir("/nonexistent_dir_12345")
+		t.AssertNE(err, nil)
+	})
+}
+
+func Test_Abs(t *testing.T) {
+	gtest.C(t, func(t *gtest.T) {
+		// Test with relative path
+		absPath := gfile.Abs(".")
+		t.Assert(len(absPath) > 0, true)
+		t.Assert(filepath.IsAbs(absPath), true)
+
+		// Test with already absolute path
+		tempDir := gfile.Temp()
+		t.Assert(gfile.Abs(tempDir), tempDir)
+
+		// Test with relative path components
+		absPath = gfile.Abs("./test")
+		t.Assert(filepath.IsAbs(absPath), true)
+
+		// Test with parent directory reference
+		absPath = gfile.Abs("../test")
+		t.Assert(filepath.IsAbs(absPath), true)
+
+		// Test with empty string
+		absPath = gfile.Abs("")
+		t.Assert(len(absPath) > 0, true)
+		t.Assert(filepath.IsAbs(absPath), true)
+	})
+}
+
+func Test_Name(t *testing.T) {
+	gtest.C(t, func(t *gtest.T) {
+		// Test with file extension
+		t.Assert(gfile.Name("/var/www/file.js"), "file")
+		t.Assert(gfile.Name("file.js"), "file")
+
+		// Test with multiple dots
+		t.Assert(gfile.Name("/var/www/file.min.js"), "file.min")
+		t.Assert(gfile.Name("archive.tar.gz"), "archive.tar")
+
+		// Test without extension
+		t.Assert(gfile.Name("/var/www/file"), "file")
+		t.Assert(gfile.Name("file"), "file")
+
+		// Test with hidden file (dot file)
+		t.Assert(gfile.Name(".gitignore"), "")
+		t.Assert(gfile.Name(".hidden.txt"), ".hidden")
+
+		// Test with directory path
+		t.Assert(gfile.Name("/var/www/"), "www")
+
+		// Test with only extension
+		t.Assert(gfile.Name(".txt"), "")
 	})
 }
